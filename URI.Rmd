@@ -1,0 +1,1276 @@
+---
+title: "Upper Respiratory Infection"
+author: "Xuting Jin"
+date: "2021/4/13"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# R Packages 
+```{r packages, message = FALSE}
+rm(list = ls())
+
+library(data.table)
+library(ggplot2)
+library(tidyverse)
+library(plyr)
+library(ggpubr)
+library(readxl)
+library(psych)
+library(RColorBrewer)
+```
+
+# Tables
+*calculation of EAPC*
+```{r EAPC, message = FALSE}
+years <- fread('I:/Papers/URI/Data/single/years_locations.csv')
+
+#ASIR
+regions_years_ASIR <- years[measure_name == 'Incidence' & 
+                           age_name == 'Age-standardized' & 
+                           metric_name == 'Rate' &
+                           location_id %in% c(1,44637,44636,44639,44634,
+                                              44635,32,42,56,70,
+                                              65,100,96,73,120,
+                                              104,124,134,138,159,
+                                              5,21,9,167,174,
+                                              192,199) &
+                           sex_name == 'Both',]
+EAPC_ASIR <- data.table()
+for (i in unique(regions_years_ASIR$location_id)) {
+  temp <- regions_years_ASIR[location_id == i, ]
+  temp$lograte <- log(temp$val)
+  fit <- lm(lograte ~ year, temp)
+  b <- coefficients(fit)
+  CI <- confint(fit)
+  EAPC0.5 <- format(round(100 * (exp(b[2]) - 1), digits = 2), nsmall = 2)
+  EAPC0.975 <- format(round(100 * (exp(CI[4]) - 1), digits = 2), nsmall = 2)
+  EAPC0.025 <- format(round(100 * (exp(CI[2]) - 1), digits = 2), nsmall = 2)
+  location_id <- regions_years_ASIR$location_id[regions_years_ASIR$location_id == i] %>% unique()
+  EAPC <- cbind(location_id, EAPC0.025, EAPC0.5, EAPC0.975)
+  EAPC_ASIR <- rbind(EAPC_ASIR,EAPC)
+}
+EAPC_ASIR <- EAPC_ASIR[,.(location_id, EAPC_ASIR = paste(EAPC_ASIR$EAPC0.5,' (', 
+                                       EAPC_ASIR$EAPC0.025, ' to ', 
+                                       EAPC_ASIR$EAPC0.975, ')', sep = ''))]
+
+write.csv(EAPC_ASIR, 'I:/Papers/URI/Data/single/EAPC_ASIR.csv')
+
+#AS-DALY
+regions_years_ASDR <- years[measure_name == 'DALYs (Disability-Adjusted Life Years)' & 
+                           age_name == 'Age-standardized' & 
+                           metric_name == 'Rate' &
+                           location_id %in% c(1,44637,44636,44639,44634,
+                                              44635,32,42,56,70,
+                                              65,100,96,73,120,
+                                              104,124,134,138,159,
+                                              5,21,9,167,174,
+                                              192,199) &
+                           sex_name == 'Both',]
+
+
+EAPC_ASDR <- data.table()
+for (i in unique(regions_years_ASDR$location_id)) {
+  temp <- regions_years_ASDR[location_id == i, ]
+  temp$lograte <- log(temp$val)
+  fit <- lm(lograte ~ year, temp)
+  b <- coefficients(fit)
+  CI <- confint(fit)
+  EAPC0.5 = format(round(100 * (exp(b[2]) - 1), digits = 2), nsmall = 2)
+  EAPC0.975 = format(round(100 * (exp(CI[4]) - 1), digits = 2), nsmall = 2)
+  EAPC0.025 = format(round(100 * (exp(CI[2]) - 1), digits = 2), nsmall = 2)
+  location_id <- regions_years_ASIR$location_id[regions_years_ASIR$location_id == i] %>% unique()
+  EAPC <- cbind(location_id, EAPC0.025, EAPC0.5, EAPC0.975)
+  EAPC_ASDR <- rbind(EAPC_ASDR,EAPC)
+}
+
+EAPC_ASDR <- EAPC_ASDR[,.(location_id, EAPC_ASDR = paste(EAPC_ASDR$EAPC0.5,' (', 
+                                       EAPC_ASDR$EAPC0.025, ' to ', 
+                                       EAPC_ASDR$EAPC0.975, ')', sep = ''))]
+
+write.csv(EAPC_ASDR, 'I:/Papers/URI/Data/single/EAPC_ASDR.csv')
+
+```
+
+*Functions for Tables*
+```{r function_for_table}
+#for single
+single_function <- function(table_name, measure, metric, age, locations, years, sex){
+  temp <- table_name[measure_name == measure & 
+                   age_name == age & 
+                   metric_name == metric & 
+                   location_id %in% locations &
+                   year == years  &
+                   sex_name == sex, ]
+  
+  if(metric == 'Rate'| measure == 'Deaths'){
+    temp$val <- format(round(temp$val, digits = 1), nsmall = 1, big.mark = ',', trim = T)
+    temp$upper <- format(round(temp$upper, digits = 1), nsmall = 1, big.mark = ',', trim = T)
+    temp$lower <- format(round(temp$lower, digits = 1), nsmall = 1, big.mark = ',', trim = T)
+  }
+  else if(metric == 'Number' & measure == 'Incidence'){
+    temp$val <- format(round(temp$val/1000000, digits = 1), 
+                       nsmall = 1, big.mark = ',', trim = T)
+    temp$upper <- format(round(temp$upper/1000000, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+    temp$lower <- format(round(temp$lower/1000000, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+  }
+  else if(metric == 'Number' & measure %like% 'DALYs'){
+    temp$val <- format(round(temp$val/1000, digits = 1), 
+                       nsmall = 1, big.mark = ',', trim = T)
+    temp$upper <- format(round(temp$upper/1000, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+    temp$lower <- format(round(temp$lower/1000, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+  }
+  
+  temp$result <- paste(temp$val,' (', 
+                       temp$lower, ' to ', 
+                       temp$upper, ')', 
+                       sep = '')
+  temp <- temp[,.(location_id, result)]
+  new_name <- paste(substr(measure, 1, 4), metric, years, sep = '_')
+  colnames(temp) <- c('location_id', new_name)
+  #new_path <- paste("I:/", new_name, ".csv", sep = '')
+  #write.csv(temp, new_path)
+  return(temp)
+}
+
+#for changes
+change_function <- function(table_name, measure, metric, age, locations,  sex, year_starts, year_ends){
+  temp <- table_name[measure_name == measure & 
+                       age_name == age & 
+                       metric_name == metric & 
+                       location_id %in% locations &
+                       year_start == year_starts & 
+                       year_end == year_ends &
+                       sex_name == sex, ]
+  
+  temp$val <- format(round(temp$val * 100, digits = 2), nsmall = 2, big.mark = ',', trim = T)
+  temp$upper <- format(round(temp$upper * 100, digits = 2), nsmall = 2, big.mark = ',', trim = T)
+  temp$lower <- format(round(temp$lower * 100, digits = 2), nsmall = 2, big.mark = ',', trim = T)
+  temp$result <- paste(temp$val,' (', 
+                       temp$lower, ' to ', 
+                       temp$upper, ')', 
+                       sep = '')
+  temp <- temp[,.(location_id, result)]
+  new_name <- paste('Change', substr(measure, 1, 4), metric, sep = '_')
+  colnames(temp) <- c('location_id', new_name)
+  #new_path <- paste("I:/", new_name, ".csv", sep = '')
+  #write.csv(temp, new_path)
+  return(temp)
+}
+
+```
+
+## Table1 - As-Incidence and As-DALY in regions
+```{r table1, message = FALSE}
+locations <- fread('I:/Papers/URI/Data/single/location.csv')
+location_change <- fread('I:/Papers/URI/Data/change/locations_change.csv')
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0, 2) |
+                                        hierarchy$`Location Name` %like% 'SDI']
+location_names <- locations[,.(location_name = max(location_name)), by = location_id]
+
+#Age-standardized Incidence 1990
+AS_Incidence_1990 <- single_function(locations, 'Incidence', 'Rate', 'Age-standardized', region_ids, 1990, 'Both')
+
+#Age-standardized DALY 1990
+AS_DALY_1990 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', region_ids, 1990, 'Both')
+  
+#Age-standardized Incidence 2019
+AS_Incidence_2019 <- single_function(locations, 'Incidence', 'Rate', 'Age-standardized', region_ids, 2019, 'Both')
+
+#Age-standardized DALY 2019
+AS_DALY_2019 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', region_ids, 2019, 'Both')
+
+#Changes in Incidence
+CR_Incidence <- change_function(location_change, 'Incidence', 'Rate', 'Age-standardized', region_ids, 'Both', 1990, 2019)
+
+#Changes in Age-standardized DALY
+CR_DALY <- change_function(location_change, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', region_ids, 'Both', 1990, 2019)
+
+table1 <- AS_Incidence_1990[AS_Incidence_2019, on = .(location_id)]
+table1 <- table1[CR_Incidence, on = .(location_id)]
+table1 <- table1[AS_DALY_1990, on = .(location_id)]
+table1 <- table1[AS_DALY_2019, on = .(location_id)]
+table1 <- table1[CR_DALY, on = .(location_id)] 
+table1 <- location_names[table1, on = .(location_id)]
+
+write.csv(table1, 'I:/Papers/URI/Data/results/table1.csv')
+```
+
+## Table2 - As-Incidence and A, s-DALY in countries
+
+*Function for EAPC*
+```{r EAPC_function}
+EAPC_function <- function(table_name, measure, age, metric, location_ids, sex){
+  temp_table <-  table_name[measure_name == measure & 
+                           age_name == age & 
+                           metric_name == metric &
+                           location_id %in% location_ids &
+                           sex_name == sex,]
+  temp_EAPC <- data.table()
+  for (i in location_ids) {
+    temp <- temp_table[location_id == i, ]
+    temp$lograte <- log(temp$val)
+    fit <- lm(lograte ~ year, temp)
+    b <- coefficients(fit)
+    CI <- confint(fit)
+    EAPC0.5 <- format(round(100 * (exp(b[2]) - 1), digits = 2), nsmall = 2, trim = T)
+    EAPC0.975 <- format(round(100 * (exp(CI[4]) - 1), digits = 2), nsmall = 2, trim = T)
+    EAPC0.025 <- format(round(100 * (exp(CI[2]) - 1), digits = 2), nsmall = 2, trim = T)
+    location_id <- data.table(location_id = i)
+    EAPC <- cbind(location_id, EAPC0.025, EAPC0.5, EAPC0.975)
+    temp_EAPC <- rbind(temp_EAPC,EAPC)
+  }
+  
+  new_name <- paste('EAPC_', substr(measure, 1, 4), sep = '')
+  temp_EAPC <- temp_EAPC[,.(location_id, EAPC = paste(temp_EAPC$EAPC0.5,' (', 
+                                       temp_EAPC$EAPC0.025, ' to ', 
+                                       temp_EAPC$EAPC0.975, ')', sep = ''))]
+  colnames(temp_EAPC) <- c('location_id', new_name)
+  return(temp_EAPC)
+}
+
+```
+
+*EAPC*
+```{r EAPC_countries}
+years <- fread('I:/Papers/URI/Data/single/years_locations.csv')
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+country_ids <- hierarchy$`Location ID`[hierarchy$Level == 3]
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0,2) | 
+                                        hierarchy$`Location Name` %like% 'SDI']
+#ASIR
+EAPC_ASIR_countries <- EAPC_function(years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASDR_countries <- EAPC_function(years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASMR_countries <- EAPC_function(years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASMR_regions <- EAPC_function(years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+
+
+write.csv(EAPC_ASIR_countries, 'I:/Papers/URI/Data/results/EAPC_ASIR_countries.csv')
+write.csv(EAPC_ASDR_countries, 'I:/Papers/URI/Data/results/EAPC_ASDR_countries.csv')
+write.csv(EAPC_ASMR_countries, 'I:/Papers/URI/Data/results/EAPC_ASMR_countries.csv')
+write.csv(EAPC_ASMR_regions, 'I:/Papers/URI/Data/results/EAPC_ASMR_regionsR.csv')
+```
+
+```{r Table2, message = FALSE}
+locations <- fread('I:/Papers/URI/Data/single/location.csv')
+location_change <- fread('I:/Papers/URI/Data/change/locations_change.csv')
+
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+country_ids <- hierarchy$`Location ID`[hierarchy$Level == 3]
+
+#Age-standardized Incidence 1990
+AS_Incidence_1990 <- single_function(locations, 'Incidence', 'Rate', 'Age-standardized', country_ids, 1990, 'Both')
+
+#Age-standardized DALY 1990
+AS_DALY_1990 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', country_ids, 1990, 'Both')
+  
+#Age-standardized Incidence 2019
+AS_Incidence_2019 <- single_function(locations, 'Incidence', 'Rate', 'Age-standardized', country_ids, 2019, 'Both')
+
+#Age-standardized DALY 2019
+AS_DALY_2019 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', country_ids, 2019, 'Both')
+
+#Changes in Incidence
+CR_Incidence <- change_function(location_change, 'Incidence', 'Rate', 'Age-standardized', country_ids, 'Both', 1990, 2019)
+
+#Changes in Age-standardized DALY
+CR_DALY <- change_function(location_change, 'DALYs (Disability-Adjusted Life Years)', 'Rate', 'Age-standardized', country_ids, 'Both', 1990, 2019)
+
+
+
+table2 <- AS_Incidence_1990[AS_Incidence_2019, on = .(location_id)]
+table2 <- table2[CR_Incidence, on = .(location_id)]
+table2 <- table2[AS_DALY_1990, on = .(location_id)]
+table2 <- table2[AS_DALY_2019, on = .(location_id)]
+table2 <- table2[CR_DALY, on = .(location_id)]
+location_names <- locations[,.(location_name = max(location_name)), by = location_id]
+table2 <- location_names[table2, on = .(location_id)]
+
+write.csv(table2, 'I:/Papers/URI/Data/results/table2.csv')
+```
+
+## Table3 -  Incidence and DALY in regions and countries
+```{r Table3, message = FALSE}
+locations <- fread('I:/Papers/URI/Data/single/location.csv')
+location_change <- fread('I:/Papers/URI/Data/change/locations_change.csv')
+
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+country_ids <- hierarchy$`Location ID`[hierarchy$Level == 3]
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0, 2) |
+                                        hierarchy$`Location Name` %like% 'SDI']
+location_names <- locations[,.(location_name = max(location_name)), by = location_id]
+
+# countries ===================================================================
+## Incidences 1990
+Incidence_1990 <- single_function(locations, 'Incidence', 'Number', 'All Ages', country_ids, 1990, 'Both')
+
+## DALY 1990
+DALY_1990 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', country_ids, 1990, 'Both')
+
+## Incidences 2019
+Incidence_2019 <- single_function(locations, 'Incidence', 'Number', 'All Ages', country_ids, 2019, 'Both')
+
+## DALY 2019
+DALY_2019 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', country_ids, 2019, 'Both')
+
+## Changes in Incidence
+CR_Incidence <- change_function(location_change, 'Incidence', 'Number', 'All Ages', country_ids, 'Both', 1990, 2019)
+
+## Changes in DALY
+CR_DALY <- change_function(location_change, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', country_ids, 'Both', 1990, 2019)
+
+# bind in to table
+table3 <- Incidence_1990[Incidence_2019, on = .(location_id)]
+table3 <- table3[CR_Incidence, on = .(location_id)]
+table3 <- table3[DALY_1990, on = .(location_id)]
+table3 <- table3[DALY_2019, on = .(location_id)]
+table3 <- table3[CR_DALY, on = .(location_id)]
+table3 <- location_names[table3, on = .(location_id)]
+
+write.csv(table3, 'I:/Papers/URI/Data/results/table3_a.csv')
+
+
+# regions ===================================================================
+## Incidences 1990
+Incidence_1990 <- single_function(locations, 'Incidence', 'Number', 'All Ages', region_ids, 1990, 'Both')
+
+## DALY 1990
+DALY_1990 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', region_ids, 1990, 'Both')
+
+## Incidences 2019
+Incidence_2019 <- single_function(locations, 'Incidence', 'Number', 'All Ages', region_ids, 2019, 'Both')
+
+## DALY 2019
+DALY_2019 <- single_function(locations, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', region_ids, 2019, 'Both')
+
+## Changes in Incidence
+CR_Incidence <- change_function(location_change, 'Incidence', 'Number', 'All Ages', region_ids, 'Both', 1990, 2019)
+
+## Changes in DALY
+CR_DALY <- change_function(location_change, 'DALYs (Disability-Adjusted Life Years)', 'Number', 'All Ages', region_ids, 'Both', 1990, 2019)
+
+# bind in to table
+table3 <- Incidence_1990[Incidence_2019, on = .(location_id)]
+table3 <- table3[CR_Incidence, on = .(location_id)]
+table3 <- table3[DALY_1990, on = .(location_id)]
+table3 <- table3[DALY_2019, on = .(location_id)]
+table3 <- table3[CR_DALY, on = .(location_id)]
+table3 <- location_names[table3, on = .(location_id)]
+
+write.csv(table3, 'I:/Papers/URI/Data/results/table3_b.csv')
+```
+
+## Table4 - Mortality and As-mortality in regions and countries
+```{r Table4, message = FALSE}
+locations <- fread('I:/Papers/URI/Data/single/location.csv')
+location_change <- fread('I:/Papers/URI/Data/change/locations_change.csv')
+
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+country_ids <- hierarchy$`Location ID`[hierarchy$Level == 3]
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0, 2) |
+                                        hierarchy$`Location Name` %like% 'SDI']
+location_names <- locations[,.(location_name = max(location_name)), by = location_id]
+
+# countries ===================================================================
+## Mortality 1990
+Mortality_1990 <- single_function(locations, 'Deaths', 'Number', 'All Ages', country_ids, 1990, 'Both')
+
+## As_Mortality 1990
+As_Mortality_1990 <- single_function(locations, 'Deaths', 'Rate', 'Age-standardized', country_ids, 1990, 'Both')
+
+## Mortality 2019
+Mortality_2019 <- single_function(locations, 'Deaths', 'Number', 'All Ages', country_ids, 2019, 'Both')
+
+## As_Mortality 2019
+As_Mortality_2019<- single_function(locations, 'Deaths', 'Rate', 'Age-standardized', country_ids, 2019, 'Both')
+
+## Changes in Mortality
+CR_Mortality <- change_function(location_change, 'Deaths', 'Number', 'All Ages', country_ids, 'Both', 1990, 2019)
+
+## Changes in As_Mortality
+CR_As_Mortality <- change_function(location_change, 'Deaths', 'Rate', 'Age-standardized', country_ids, 'Both', 1990, 2019)
+
+## bind in to table
+table4 <- Mortality_1990[Mortality_2019, on = .(location_id)]
+table4 <- table4[CR_Mortality, on = .(location_id)]
+table4 <- table4[As_Mortality_1990, on = .(location_id)]
+table4 <- table4[As_Mortality_2019, on = .(location_id)]
+table4 <- table4[CR_As_Mortality, on = .(location_id)]
+table4 <- location_names[table4, on = .(location_id)]
+
+write.csv(table4, 'I:/Papers/URI/Data/results/table4_a.csv')
+
+# regions =====================================================================
+## Mortality 1990
+Mortality_1990 <- single_function(locations, 'Deaths', 'Number', 'All Ages', region_ids, 1990, 'Both')
+
+## As_Mortality 1990
+As_Mortality_1990 <- single_function(locations, 'Deaths', 'Rate', 'Age-standardized', region_ids, 1990, 'Both')
+
+## Mortality 2019
+Mortality_2019 <- single_function(locations, 'Deaths', 'Number', 'All Ages', region_ids, 2019, 'Both')
+
+## As_Mortality 2019
+As_Mortality_2019 <- single_function(locations, 'Deaths', 'Rate', 'Age-standardized', region_ids, 2019, 'Both')
+
+## Changes in Mortality
+CR_Mortality <- change_function(location_change, 'Deaths', 'Number', 'All Ages', region_ids, 'Both', 1990, 2019)
+
+## Changes in As_Mortality
+CR_As_Mortality <- change_function(location_change, 'Deaths', 'Rate', 'Age-standardized', region_ids, 'Both', 1990, 2019)
+
+## bind in to table
+table4 <- Mortality_1990[Mortality_2019, on = .(location_id)]
+table4 <- table4[CR_Mortality, on = .(location_id)]
+table4 <- table4[As_Mortality_1990, on = .(location_id)]
+table4 <- table4[As_Mortality_2019, on = .(location_id)]
+table4 <- table4[CR_As_Mortality, on = .(location_id)]
+table4 <- location_names[table4, on = .(location_id)]
+
+write.csv(table4, 'I:/Papers/URI/Data/results/table4_b.csv')
+```
+
+## Table5 - Regions and countries
+```{r region_countries}
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+region_country <- hierarchy[hierarchy$Level %in% c(2, 3), ]
+write.csv(region_country, 'I:/Papers/URI/Data/results/table5.csv')
+```
+
+## Figure1 - locations
+```{r risk_factors, message = FALSE}
+location_ids <- fread( 'I:/Papers/URI/Data/SDI_1990_2019.csv')
+locations <- fread('I:/Papers/URI/Data/single/location.csv')
+location_change <- fread('I:/Papers/URI/Data/change/locations_change.csv')
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+regions <- hierarchy[hierarchy$Level == 2,]
+region_value <- regions$`Location Name`
+names(region_value) = regions$`Location ID`
+location_ids$SDI_2019 <- location_ids$SDI_2019 * 100
+
+#incidence=============================================================
+location_incidence <- locations[age_name =='Age-standardized' &
+                            measure_name == 'Incidence' & 
+                            metric_name == 'Rate' & 
+                            sex_name == 'Both' &
+                            year == 2019,]
+
+location_incidence <- location_incidence[location_ids, on = .(location_id)]
+location_incidence$parent_id <- as.factor(location_incidence$parent_id)
+location_incidence$parent_id <- revalue(location_incidence$parent_id, region_value)
+#q_SDI <- quantile(location_incidence$SDI_2019, probs = c(0.2, 0.4, 0.6, 0.8), na.rm = T) 
+#q_val <- quantile(location_incidence$val, probs = c(0.25, 0.5, 0.75))
+
+mytheme <- theme_bw() + 
+  theme(
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5, unit = 'pt'),
+    axis.title.x  = element_text(face = 'bold', size = 13, vjust = 1),
+    axis.title.y  = element_text(face = 'bold', size = 13, vjust = 2),
+    axis.text = element_text(color = 'black',face = 'plain', size = 12),
+    axis.text.y = element_text(size = 11, angle = 90, hjust = 0.5, vjust = 0.5),
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    axis.ticks.length = unit(0.2, 'cm'),
+    panel.grid.major = element_line(color = NA),
+    panel.grid.minor = element_line(color = NA),
+    panel.border = element_rect(color = "white"),
+    axis.line = element_line(color = "black", size = 0.5, lineend = 'square'))
+
+p_incidence <- ggplot(data = location_incidence) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) +
+  stat_cor(aes(x = SDI_2019, y = val), method = 'spearman') + 
+  stat_smooth(aes(x = SDI_2019, y = val), method = loess, 
+              geom = 'line',  colour = 'grey20', size = 0.3, alpha = 0.7 ) +  
+  mytheme + 
+  ylab('Age-standardized Incidence Rate \n (per 100,000)')  + 
+  xlab('Socio-demographic Index') + 
+  guides(color = F)
+#  + geom_vline(xintercept = q_SDI, linetype = 'dashed')
+#  + geom_hline(yintercept = q_val, linetype = 'dashed')
+
+ggsave(p_incidence, file = 'I:/URI_revised/p_incidence.pdf', width = 6.4, height = 4)
+
+mytheme_legend <- theme_bw() + 
+    theme(
+    axis.title.x  = element_text(face = 'bold', size = 13, vjust = 1),
+    axis.title.y  = element_text(face = 'bold', size = 13, vjust = 2),
+    axis.text = element_text(color = 'black',face = 'plain', size = 12),
+    axis.text.y = element_text(size = 11, angle = 90, hjust = 0.5, vjust = 0.5),
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    axis.ticks.length = unit(0.2, 'cm'),
+    panel.grid.major = element_line(color = NA),
+    panel.grid.minor = element_line(color = NA),
+    panel.border = element_rect(color = "white"),
+    axis.line = element_line(color = "black", size = 0.5, lineend = 'square'),
+    legend.position = "bottom",
+    legend.text = element_text(color = 'black', face = 'bold', size = 12),
+    legend.title = element_blank()) 
+
+legend_incidence <- ggplot(data = location_incidence) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) +
+  stat_cor(aes(x = SDI_2019, y = val), method = 'spearman') + 
+  mytheme_legend + 
+  ylab('Age-standardized Incidence Rate \n (per 100,000)')  + 
+  xlab('Socio-demographic Index') + 
+  guides(colour = guide_legend(ncol = 2, byrow = F))
+
+ggsave(legend_incidence, file = 'I:/URI_revised/legend_incidence.pdf')
+
+
+#Death==========================================================================
+location_death <- locations[age_name =='Age-standardized' &
+                                  measure_name == 'Deaths' & 
+                                  metric_name == 'Rate' & 
+                                  sex_name == 'Both' &
+                                  year == 2019, ]
+
+location_death <- location_death[location_ids, on = .(location_id)]
+location_death$parent_id <- as.factor(location_death$parent_id)
+location_death$parent_id <- revalue(location_death$parent_id, region_value)
+
+p_death <- ggplot(data = location_death) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) +
+  stat_smooth(aes(x = SDI_2019, y = val), method = loess, 
+              geom = 'line',  colour = 'grey20', size = 0.3, alpha = 0.7 ) +
+  stat_cor(aes(x = SDI_2019, y = val), method = 'spearman', label.x = 60) +
+  annotate(geom = 'text', x = 10, y = 1.95, label = 'Somalia' ) +
+  annotate(geom = 'text', x = 29.10, y = 1.00, label = 'Central African Republic' ) + 
+  mytheme + 
+  ylab('Age-standardized Mortality Rate \n (per 100,000)') + 
+  xlab('Socio-demographic Index') +
+  guides(colour = F)
+
+ggsave(p_death, file = 'I:/URI_revised/p_death.pdf', width = 6.4, height = 4)
+
+
+#DALY===========================================================================
+location_DALY <- locations[age_name =='Age-standardized' &
+                              measure_name == 'DALYs (Disability-Adjusted Life Years)' & 
+                              metric_name == 'Rate' & 
+                              sex_name == 'Both' &
+                              year == 2019, ]
+
+location_DALY <- location_DALY[location_ids, on = .(location_id)]
+location_DALY$parent_id <- as.factor(location_DALY$parent_id)
+location_DALY$parent_id <- revalue(location_DALY$parent_id, region_value)
+
+p_DALY <- ggplot(data = location_DALY) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) +
+  stat_cor(aes(x = SDI_2019, y = val), method = 'spearman', label.x = 60) + 
+  stat_smooth(aes(x = SDI_2019, y = val), method = loess, 
+              geom = 'line',  colour = 'grey20', size = 0.3, alpha = 0.7 ) +
+  mytheme + 
+  ylab('Age-standardized DALY Rate \n (per 100,000)') + 
+  xlab('Socio-demographic Index') +
+  guides(colour =  F) +
+  annotate(geom = 'text', x = 8.80, y = 208, label = 'Somalia' ) +
+  annotate(geom = 'text', x = 27.10, y = 158, label = 'Central African Republic' ) +
+  annotate(geom = 'text', x = 35.80, y = 133, label = 'South Sudan' ) +
+  annotate(geom = 'text', x = 68.20, y = 126, label = 'Thailand' ) +
+  annotate(geom = 'text', x = 50.20, y = 123, label = 'Kenya' )
+
+ggsave(p_DALY, file = 'I:/URI_revised/p_DALY.pdf', width = 6.4, height = 4)
+
+#incidence_change===============================================================
+AR_incidence <- location_change[measure_name == 'Incidence'& sex_name == 'Both'& 
+                         age_name == 'Age-standardized'& metric_name == 'Rate' &
+                         year_start == 1990 & year_end == 2019,]
+AR_incidence <- AR_incidence[location_ids, on = .(location_id)]
+AR_incidence$parent_id <- as.factor(AR_incidence$parent_id)
+AR_incidence$parent_id <- revalue(AR_incidence$parent_id, region_value)
+
+mytheme <- theme_bw() + 
+  theme(
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5, unit = 'pt'),
+    axis.title.x  = element_text(face = 'bold', size = 13, vjust = 1),
+    axis.title.y  = element_text(face = 'bold', size = 13, vjust = 2),
+    axis.text = element_text(color = 'black',face = 'plain', size = 12),
+    axis.text.y = element_text(size = 11, angle = 90, hjust = 0.5, vjust = 0.5),
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    axis.ticks.length = unit(0.2, 'cm'),
+    panel.grid.major = element_line(color = NA),
+    panel.grid.minor = element_line(color = NA),
+    panel.border = element_rect(color = "white"),
+    axis.line = element_line(color = "black", size = 0.5, lineend = 'square'))
+
+p_incidence_ar <- ggplot(data = AR_incidence) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) + 
+  geom_hline(yintercept = 0, color = 'grey50', linetype = 'dashed') + 
+  mytheme + 
+  ylab('Percentage change in \n Age-standardized Incidence Rate') + 
+  xlab('Socio-demographic Index') + 
+  guides(colour = F) +
+  annotate('text', x = 65.8, y = -0.0720, label = 'Egypt') +
+  annotate('text', x = 50.5, y = -0.0487, label = 'Zambia') +
+  annotate('text', x = 43.2, y = -0.0370, label = 'Haiti') +
+  annotate('text', x = 44.9, y = 0.0939, label = 'Pakistan') +
+  annotate('text', x = 52.6, y = 0.0427 , label = 'Guatemda') +
+  #annotate('segment', x = 0.671, xend = 0.645, y = 0.433, yend = 0.333) +
+  annotate('text', x = 42.7, y = 0.0360, label = 'Rwanda' )
+
+ggsave(p_incidence_ar, file = 'I:/URI_revised/p_incidence_ar.pdf', width = 6.4, height = 4)
+
+
+#death_change===================================================================
+AR_death <- location_change[measure_name == 'Deaths'& sex_name == 'Both'& 
+                                  age_name == 'Age-standardized'& metric_name == 'Rate' &
+                                  year_start == 1990 & year_end == 2019,]
+
+AR_death <- AR_death[location_ids, on = .(location_id)]
+AR_death$parent_id <- as.factor(AR_death$parent_id)
+AR_death$parent_id <- revalue(AR_death$parent_id, region_value)
+
+p_death_ar <- ggplot(data = AR_death) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) + 
+  geom_hline(yintercept = 0, color = 'grey50', linetype = 'dashed') + 
+  mytheme + 
+  ylab('Percentage change in \n Age-standardized Mortality Rate') + 
+  xlab('Socio-demographic Index') + 
+  guides(colour = F) +
+  annotate('text', x = 68.6, y = 1.880, label = 'Panama') +
+  annotate('text', x = 68.0, y = 0.812, label = 'Costa Rica') +
+  annotate('text', x = 86.1, y = 0.720, label = 'Singapore') +
+  annotate('text', x = 85.1, y = 0.508, label = 'Kuwait') +
+  annotate('text', x = 55.7, y = 0.153 , label = 'Ghana') +
+  #annotate('segment', x = 0.671, xend = 0.645, y = 0.433, yend = 0.333) +
+  annotate('text', x = 73.6, y = 0.150, label = 'Ukraine' )
+
+ggsave(p_death_ar, file = 'I:/URI_revised/p_death_ar.pdf', width = 6.4, height = 4)
+
+
+#DALY_change====================================================================
+AR_DALY <- location_change[measure_name == 'DALYs (Disability-Adjusted Life Years)' & 
+                             sex_name == 'Both' & 
+                             age_name == 'Age-standardized' & 
+                             metric_name == 'Rate' & 
+                             year_start == 1990 & year_end == 2019,]
+
+AR_DALY <- AR_DALY[location_ids, on = .(location_id)]
+
+AR_DALY$parent_id <- as.factor(AR_DALY$parent_id)
+AR_DALY$parent_id <- revalue(AR_DALY$parent_id, region_value)
+
+p_DALY_ar <- ggplot(data = AR_DALY) + 
+  geom_point(aes(x = SDI_2019, y = val, colour = parent_id), size = 3, shape = 16) + 
+  geom_hline(yintercept = 0, color = 'grey50', linetype = 'dashed') + 
+  mytheme + 
+  ylab('Percentage change in \n Age-standardized DALY Rate') + 
+  xlab('Socio-demographic Index') + 
+  guides(color = F) +
+  annotate('text', x = 68.6, y = 0.110, label = 'Panama') +
+  annotate('segment', x = 54.9, xend = 58.7, y = 0.012, yend = 0.040) +
+  annotate('text', x = 58.7, y = 0.062 , label = 'Ghana') +
+  annotate('segment', x = 54.1, xend = 51.8, y = 0.00648, yend = 0.030) +
+  annotate('text', x = 48.0, y = 0.052 , label = 'Morocco')
+
+ggsave(p_DALY_ar, file = 'I:/URI_revised/p_DALY_ar.pdf', width = 6.4, height = 4)
+
+```
+
+## Figure2 - forest plot for EAPC
+*Function for EAPC 2.0*
+```{r EAPC_function_2.0}
+#location=======================================================================
+EAPC_function_2 <- function(table_name, measure, age, metric, location_ids, sex){
+  temp_table <-  table_name[measure_name == measure & 
+                           age_name == age & 
+                           metric_name == metric &
+                           location_id %in% location_ids &
+                           sex_name == sex,]
+  temp_EAPC <- data.table()
+  for (i in location_ids) {
+    temp <- temp_table[location_id == i, ]
+    temp$lograte <- log(temp$val)
+    fit <- lm(lograte ~ year, temp)
+    b <- coefficients(fit)
+    CI <- confint(fit)
+    EAPC0.5 <- 100 * (exp(b[2]) - 1)
+    EAPC0.975 <- 100 * (exp(CI[4]) - 1)
+    EAPC0.025 <- 100 * (exp(CI[2]) - 1)
+    EAPC_result = paste(format(round(EAPC0.5, digits = 2), nsmall = 2),
+                      ' (', 
+                      format(round(EAPC0.025, digits = 2), nsmall = 2), 
+                      ' to ', 
+                      format(round(EAPC0.975, digits = 2), nsmall = 2), 
+                      ')', 
+                      sep = '')
+   
+    location_id <- data.table(location_id = i)
+    EAPC <- cbind(location_id, EAPC0.5, EAPC0.025, EAPC0.975, EAPC_result)
+    temp_EAPC <- rbind(temp_EAPC,EAPC)
+  }
+  return(temp_EAPC)
+}
+
+#sex=======================================================================
+EAPC_function_s <- function(table_name, measure, age, metric, location_ids, sex_groups){
+  temp_table <-  table_name[measure_name == measure & 
+                           age_name == age & 
+                           metric_name == metric &
+                           location_id %in% location_ids &
+                           sex_name %in% sex_groups,]
+  temp_EAPC <- data.table()
+  for (i in sex_groups) {
+    temp <- temp_table[sex_name == i, ]
+    temp$lograte <- log(temp$val)
+    fit <- lm(lograte ~ year, temp)
+    b <- coefficients(fit)
+    CI <- confint(fit)
+    EAPC0.5 <- 100 * (exp(b[2]) - 1)
+    EAPC0.975 <- 100 * (exp(CI[4]) - 1)
+    EAPC0.025 <- 100 * (exp(CI[2]) - 1)
+    EAPC_result = paste(format(round(EAPC0.5, digits = 2), nsmall = 2),
+                      ' (', 
+                      format(round(EAPC0.025, digits = 2), nsmall = 2), 
+                      ' to ', 
+                      format(round(EAPC0.975, digits = 2), nsmall = 2), 
+                      ')', 
+                      sep = '')
+   
+    group <- data.table('group' = i)
+    EAPC <- cbind(group, EAPC0.5, EAPC0.025, EAPC0.975, EAPC_result)
+    temp_EAPC <- rbind(temp_EAPC,EAPC)
+  }
+  return(temp_EAPC)
+}
+
+#age============================================================================
+EAPC_function_a <- function(table_name, measure, age_groups, metric, location_ids, sex){
+  temp_table <-  table_name[measure_name == measure & 
+                           age_name %in% age_groups & 
+                           metric_name == metric &
+                           location_id == location_ids &
+                           sex_name == sex,]
+  temp_EAPC <- data.table()
+  for (i in age_groups) {
+    temp <- temp_table[age_name == i, ]
+    temp$lograte <- log(temp$val)
+    fit <- lm(lograte ~ year, temp)
+    b <- coefficients(fit)
+    CI <- confint(fit)
+    EAPC0.5 <- 100 * (exp(b[2]) - 1)
+    EAPC0.975 <- 100 * (exp(CI[4]) - 1)
+    EAPC0.025 <- 100 * (exp(CI[2]) - 1)
+    EAPC_result = paste(format(round(EAPC0.5, digits = 2), nsmall = 2),
+                      ' (', 
+                      format(round(EAPC0.025, digits = 2), nsmall = 2), 
+                      ' to ', 
+                      format(round(EAPC0.975, digits = 2), nsmall = 2), 
+                      ')', 
+                      sep = '')
+   
+    group <- data.table('group' = i)
+    EAPC <- cbind(group, EAPC0.5, EAPC0.025, EAPC0.975, EAPC_result)
+    temp_EAPC <- rbind(temp_EAPC,EAPC)
+  }
+  return(temp_EAPC)
+}
+```
+
+```{r forest_for_EAPC}
+#Calculation of EAPC in Geopgraphic Regions=====================================
+years <- fread('I:/Papers/URI/Data/single/years_locations.csv')
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0,2) | 
+                                        hierarchy$`Location Name` %like% 'SDI']
+
+region_names <- hierarchy[hierarchy$Level %in% c(0,2) | 
+                                        hierarchy$`Location Name` %like% 'SDI',
+                          c('Level', 'Location ID', 'Location Name')] %>% data.table()
+
+colnames(region_names) <- c('level', 'location_id', 'location_name')
+EAPC_ASIR_region <- EAPC_function_2(years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+
+EAPC_ASDR_region <- EAPC_function_2(years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+
+EAPC_ASMR_region <- EAPC_function_2(years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+EAPC_ASIR_region$measure = 'ASIR'
+EAPC_ASDR_region$measure = 'ASDR'
+EAPC_ASMR_region$measure = 'ASMR'
+
+EAPC_region <- rbind(EAPC_ASIR_region, EAPC_ASMR_region, EAPC_ASDR_region)
+EAPC_region <- region_names[EAPC_region, on = .(location_id)]
+EAPC_region$measure <-factor(EAPC_region$measure, levels = c('ASIR', 'ASMR', 'ASDR'))
+names <- EAPC_region$location_name[order(EAPC_region$location_id)] %>% unique()
+#location_order <- NULL
+#for (i in 1:length(names)) {
+#  location_order <- paste(location_order, "'" ,names[i], "', ", sep = '')
+#}
+location_order <- c('Global', 
+                    'High SDI', 'High-middle SDI', 'Middle SDI', 'Low-middle SDI', 'Low SDI',
+                    'East Asia', 'Southeast Asia', 'Oceania', 'Central Asia', 
+                    'Central Europe', 'Eastern Europe', 'High-income Asia Pacific', 
+                    'Australasia', 'Western Europe', 'Southern Latin America', 
+                    'High-income North America', 'Caribbean', 'Andean Latin America', 
+                    'Central Latin America', 'Tropical Latin America', 
+                    'North Africa and Middle East', 'South Asia', 
+                    'Central Sub-Saharan Africa', 'Eastern Sub-Saharan Africa', 
+                    'Southern Sub-Saharan Africa', 'Western Sub-Saharan Africa')
+
+#forest plot for geographic regions=============================================
+mytheme <- theme_bw() + 
+  theme(
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5, unit = 'pt'),
+    #axis.title.y = element_blank(), 
+    axis.title.x  = element_text(face = 'bold', size = 10, vjust = 1),
+    axis.title.y  = element_text(face = 'bold', size = 10, vjust = 2),
+    axis.text = element_text(color = 'black',face = 'plain', size = 8),
+    axis.text.y = element_text(size = 8),
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    axis.ticks.length = unit(0.2, 'cm'),
+    panel.grid.major = element_line(color = NA),
+    panel.grid.minor = element_line(color = NA),
+    panel.border = element_rect(color = "white"),
+    axis.line = element_line(color = "black", size = 0.5, lineend = 'square'),
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"))
+
+EAPC_regions <- ggplot(data = EAPC_region, aes(x = EAPC0.5, y = location_name, col = as.factor(level))) +
+  geom_point(size = 0.8) +
+  geom_errorbarh(aes(xmax = EAPC0.975, xmin = EAPC0.025), height = 0.4, size = 0.4) +
+  geom_vline(xintercept = 0, color = 'grey50', linetype = 'dashed') +
+  facet_grid(. ~ measure, scales = 'free') +
+  mytheme +  guides(colour = F)  +
+  scale_y_discrete(limits = rev(location_order)) +
+  xlab('Estimated annual percentage change, % (95% CI) ') +
+  ylab('Regions')
+  #geom_text(data = EAPC_region, aes(x = 5, y = location_name, label = EAPC_result))
+
+ggsave(EAPC_regions, 
+       file = 'I:/URI_revised/EAPC_regions.tiff', 
+       device = 'tiff',
+       width = 6.4, height = 4,
+       dpi = 900)
+
+#Calculation for age and sex=============================================
+age_years <- fread('I:/Papers/URI/Data/single/age_years.csv')
+age_groups <- c("Under 5", "5 to 9", "10 to 14", "15 to 19", 
+                "20 to 24", "25 to 29", "30 to 34", "35 to 39", "40 to 44",
+                "45 to 49", "50 to 54", "55 to 59", "60 to 64", "65 to 69", 
+                "70 to 74", "75 to 79", "80 plus")
+sex_groups <- age_years$sex_name %>% unique()
+
+
+EAPC_ASIR_sex <- EAPC_function_s(age_years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+
+
+EAPC_ASDR_sex <- EAPC_function_s(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+
+
+EAPC_ASMR_sex <- EAPC_function_s(age_years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+EAPC_ASIR_sex$measure = 'ASIR'
+EAPC_ASDR_sex$measure = 'ASDR'
+EAPC_ASMR_sex$measure = 'ASMR'
+EAPC_sex <- rbind(EAPC_ASIR_sex, EAPC_ASDR_sex, EAPC_ASMR_sex)
+EAPC_sex$level <- EAPC_sex$group
+EAPC_sex$group <- 'All'
+
+EAPC_ASIR_age <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+
+EAPC_ASDR_age <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+
+EAPC_ASMR_age <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+EAPC_ASIR_age$measure = 'ASIR'
+EAPC_ASDR_age$measure = 'ASDR'
+EAPC_ASMR_age$measure = 'ASMR'
+EAPC_age_both <- rbind(EAPC_ASIR_age, EAPC_ASDR_age, EAPC_ASMR_age)
+EAPC_age_both$level = 'Both'
+
+#Male
+EAPC_ASIR_age_M <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+
+EAPC_ASDR_age_M <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+
+EAPC_ASMR_age_M <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+EAPC_ASIR_age_M$measure = 'ASIR'
+EAPC_ASDR_age_M$measure = 'ASDR'
+EAPC_ASMR_age_M$measure = 'ASMR'
+EAPC_age_M <- rbind(EAPC_ASIR_age_M, EAPC_ASDR_age_M, EAPC_ASMR_age_M)
+EAPC_age_M$level = 'Male'
+
+#Female
+EAPC_ASIR_age_F <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+
+EAPC_ASDR_age_F <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+
+EAPC_ASMR_age_F <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+EAPC_ASIR_age_F$measure = 'ASIR'
+EAPC_ASDR_age_F$measure = 'ASDR'
+EAPC_ASMR_age_F$measure = 'ASMR'
+EAPC_age_F <- rbind(EAPC_ASIR_age_F, EAPC_ASDR_age_F, EAPC_ASMR_age_F)
+EAPC_age_F$level = 'Female'
+
+EAPC_age_sex <- rbind(EAPC_sex, EAPC_age_both, EAPC_age_M, EAPC_age_F)
+
+EAPC_age_sex$sub[EAPC_age_sex$level == 'Female'] <- 
+  paste(EAPC_age_sex$group[EAPC_age_sex$level == 'Female'], '_F', sep = '')
+EAPC_age_sex$sub[EAPC_age_sex$level == 'Male'] <- 
+  paste(EAPC_age_sex$group[EAPC_age_sex$level == 'Male'], '_M', sep = '')
+EAPC_age_sex$sub[EAPC_age_sex$level == 'Both'] <- EAPC_age_sex$group[EAPC_age_sex$level == 'Both']
+#ages <- unique(EAPC_age_sex$sub) %>% sort()
+#age_order <- NULL
+#for (i in 1:length(ages)) {
+#  age_order <- paste(age_order, "'" ,ages[i], "', ", sep = '')
+#}
+
+#age_name <- NULL
+#for (i in 1:length(ages)) {
+#  if(!(ages[i] %like% '_M' | ages[i] %like% '_F')  ){
+#   age_name <- paste(age_name, "'" ,ages[i], "', ", sep = '') 
+#  }
+#}
+
+age_order <- c('All', 'All_F', 'All_M',
+               'Under 5', 'Under 5_F', 'Under 5_M', 
+               '5 to 9', '5 to 9_F', '5 to 9_M',
+               '10 to 14', '10 to 14_F', '10 to 14_M', 
+               '15 to 19', '15 to 19_F', '15 to 19_M',
+               '20 to 24', '20 to 24_F', '20 to 24_M', 
+               '25 to 29', '25 to 29_F', '25 to 29_M', 
+               '30 to 34', '30 to 34_F', '30 to 34_M', 
+               '35 to 39', '35 to 39_F', '35 to 39_M', 
+               '40 to 44', '40 to 44_F', '40 to 44_M', 
+               '45 to 49', '45 to 49_F', '45 to 49_M',  
+               '50 to 54', '50 to 54_F', '50 to 54_M', 
+               '55 to 59', '55 to 59_F', '55 to 59_M', 
+               '60 to 64', '60 to 64_F', '60 to 64_M', 
+               '65 to 69', '65 to 69_F', '65 to 69_M', 
+               '70 to 74', '70 to 74_F', '70 to 74_M', 
+               '75 to 79', '75 to 79_F', '75 to 79_M', 
+               '80 plus', '80 plus_F', '80 plus_M')
+
+age_names <- c( 'All',
+               'Under 5',
+               '5 to 9', 
+               '10 to 14',
+               '15 to 19',
+               '20 to 24',
+               '25 to 29',
+               '30 to 34', 
+               '35 to 39', 
+               '40 to 44', 
+               '45 to 49', 
+               '50 to 54', 
+               '55 to 59', 
+               '60 to 64', 
+               '65 to 69', 
+               '70 to 74', 
+               '75 to 79', 
+               '80 plus'
+               )
+
+EAPC_age_sex$measure <-factor(EAPC_age_sex$measure, levels = c('ASIR', 'ASMR', 'ASDR'))
+
+#forest plot for age and sex=============================================
+mytheme <- theme_bw() + 
+  theme(
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5, unit = 'pt'),
+    axis.title.x  = element_text(face = 'bold', size = 10, vjust = 1),
+    axis.title.y  = element_text(face = 'bold', size = 10, vjust = 2),
+    axis.text = element_text(color = 'black',face = 'plain', size = 8),
+    axis.text.y = element_text(size = 8),
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    axis.ticks.length = unit(0.2, 'cm'),
+    panel.grid.major = element_line(color = NA),
+    panel.grid.minor = element_line(color = NA),
+    panel.border = element_rect(color = "white"),
+    axis.line = element_line(color = "black", size = 0.5, lineend = 'square'),
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"),
+    legend.title = element_blank()) 
+
+EAPC_age_sex_p <- ggplot(data = EAPC_age_sex, aes(x = EAPC0.5, y = sub, col = as.factor(level))) +
+                geom_point(size = 0.8) +
+                geom_errorbarh(aes(xmax = EAPC0.975, xmin = EAPC0.025), 
+                               height = 0.6, size = 0.4) +
+                geom_vline(xintercept = 0, color = 'grey50', linetype = 'dashed') +
+                facet_grid(. ~ measure, scales = 'free') +
+                mytheme +  
+                scale_y_discrete(limits = rev(age_order), breaks =  age_names) +
+                ylab('Ages (Years)') + 
+                xlab('Estimated annual percentage change, % (95% CI) ')
+                #geom_text(data = EAPC_region, aes(x = 5, y = location_name, label = EAPC_result))
+
+ggsave(EAPC_age_sex_p, 
+       file = 'I:/URI_revised/EAPC_age_sex_p.tiff', 
+       device = 'tiff',
+       width = 6.4, height = 4,
+       dpi = 900)
+```
+
+## Table6 - EAPCs
+*Age and Sex*
+```{r age_sex_EAPC}
+age_years <- fread('I:/Papers/URI/Data/single/age_years.csv')
+age_groups <- c("Under 5", "5 to 9", "10 to 14", "15 to 19", 
+                "20 to 24", "25 to 29", "30 to 34", "35 to 39", "40 to 44",
+                "45 to 49", "50 to 54", "55 to 59", "60 to 64", "65 to 69", 
+                "70 to 74", "75 to 79", "80 plus")
+sex_groups <- age_years$sex_name %>% unique()
+
+#All age
+EAPC_ASIR_sex <- EAPC_function_s(age_years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+
+EAPC_ASDR_sex <- EAPC_function_s(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+
+
+EAPC_ASMR_sex <- EAPC_function_s(age_years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   1, sex_groups)
+
+EAPC_ASIR_sex <- EAPC_ASIR_sex[,.(age = 'All', sex = group, ASIR = EAPC_result)]
+EAPC_ASDR_sex <- EAPC_ASDR_sex[,.(age = 'All', sex = group, ASDR = EAPC_result)]
+EAPC_ASMR_sex <- EAPC_ASMR_sex[,.(age = 'All', sex = group, ASMR = EAPC_result)]
+
+EAPC_all_age <- EAPC_ASIR_sex[EAPC_ASMR_sex, on = .(age, sex)]
+EAPC_all_age <- EAPC_all_age[EAPC_ASDR_sex, on = .(age, sex)]
+
+#Both
+EAPC_ASIR_age <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+
+EAPC_ASDR_age <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+
+EAPC_ASMR_age <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Both')
+EAPC_ASIR_age <- EAPC_ASIR_age[,.(age = group, sex = 'Both', ASIR = EAPC_result)]
+EAPC_ASDR_age <- EAPC_ASDR_age[,.(age = group, sex = 'Both', ASDR = EAPC_result)]
+EAPC_ASMR_age <- EAPC_ASMR_age[,.(age = group, sex = 'Both', ASMR = EAPC_result)]
+
+EAPC_both_age <- EAPC_ASIR_age[EAPC_ASMR_age, on = .(age, sex)]
+EAPC_both_age <- EAPC_both_age[EAPC_ASDR_age, on = .(age, sex)]
+
+#Male
+EAPC_ASIR_age_M <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+
+EAPC_ASDR_age_M <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+
+EAPC_ASMR_age_M <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Male')
+
+EAPC_ASIR_age_M <- EAPC_ASIR_age_M[,.(age = group, sex = 'Male', ASIR = EAPC_result)]
+EAPC_ASDR_age_M <- EAPC_ASDR_age_M[,.(age = group, sex = 'Male', ASDR = EAPC_result)]
+EAPC_ASMR_age_M <- EAPC_ASMR_age_M[,.(age = group, sex = 'Male', ASMR = EAPC_result)]
+
+EAPC_M_age <- EAPC_ASIR_age_M[EAPC_ASMR_age_M, on = .(age, sex)]
+EAPC_M_age <- EAPC_M_age[EAPC_ASDR_age_M, on = .(age, sex)]
+
+#Female
+EAPC_ASIR_age_F <- EAPC_function_a(age_years, 'Incidence', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+
+EAPC_ASDR_age_F <- EAPC_function_a(age_years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+
+EAPC_ASMR_age_F <- EAPC_function_a(age_years, 'Deaths', 
+                                   age_groups, 'Rate', 
+                                   1, 'Female')
+
+EAPC_ASIR_age_F <- EAPC_ASIR_age_F[,.(age = group, sex = 'Female', ASIR = EAPC_result)]
+EAPC_ASDR_age_F <- EAPC_ASDR_age_F[,.(age = group, sex = 'Female', ASDR = EAPC_result)]
+EAPC_ASMR_age_F <- EAPC_ASMR_age_F[,.(age = group, sex = 'Female', ASMR = EAPC_result)]
+
+EAPC_F_age <- EAPC_ASIR_age_F[EAPC_ASMR_age_F, on = .(age, sex)]
+EAPC_F_age <- EAPC_F_age[EAPC_ASDR_age_F, on = .(age, sex)]
+
+EAPC_age_sex <- rbind(EAPC_all_age, EAPC_both_age, EAPC_M_age, EAPC_F_age)
+
+write.csv(EAPC_age_sex, 'I:/Papers/URI/Data/results/table6.csv')
+```
+
+*Regions and countries*
+```{r regions_EAPC}
+years <- fread('I:/Papers/URI/Data/single/years_locations.csv')
+hierarchy <- read_xlsx(path = 'I:/Papers/URI/Data/hierarchy.xlsx', sheet = 1)
+
+#regions
+region_ids <- hierarchy$`Location ID`[hierarchy$Level %in% c(0,2) | 
+                                        hierarchy$`Location Name` %like% 'SDI']
+
+region_names <- hierarchy[hierarchy$Level %in% c(0,2) | 
+                                        hierarchy$`Location Name` %like% 'SDI',
+                          c('Level', 'Location ID', 'Location Name')] %>% data.table()
+
+colnames(region_names) <- c('level', 'location_id', 'location_name')
+
+EAPC_ASIR_region <- EAPC_function_2(years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+
+EAPC_ASDR_region <- EAPC_function_2(years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+
+EAPC_ASMR_region <- EAPC_function_2(years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   region_ids, 'Both')
+EAPC_ASIR_region <- EAPC_ASIR_region[,.(location_id, ASIR = EAPC_result)]
+EAPC_ASDR_region <- EAPC_ASDR_region[,.(location_id, ASDR = EAPC_result)]
+EAPC_ASMR_region <- EAPC_ASMR_region[,.(location_id, ASMR = EAPC_result)]
+
+EAPC_region <- EAPC_ASIR_region[EAPC_ASMR_region, on = .(location_id)]
+EAPC_region <- EAPC_region[EAPC_ASDR_region, on = .(location_id)]
+EAPC_region <- region_names[EAPC_region, on = .(location_id)]
+
+#countries
+country_ids <- hierarchy$`Location ID`[hierarchy$Level == 3]
+country_names <- hierarchy[hierarchy$Level == 3,
+                          c('Level', 'Location ID', 'Location Name')] %>% data.table()
+colnames(country_names) <- c('level', 'location_id', 'location_name')
+
+EAPC_ASIR_country <- EAPC_function_2(years, 'Incidence', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASDR_country <- EAPC_function_2(years, 'DALYs (Disability-Adjusted Life Years)', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASMR_country <- EAPC_function_2(years, 'Deaths', 
+                                   'Age-standardized', 'Rate', 
+                                   country_ids, 'Both')
+
+EAPC_ASIR_country <- EAPC_ASIR_country[,.(location_id, ASIR = EAPC_result)]
+EAPC_ASDR_country <- EAPC_ASDR_country[,.(location_id, ASDR = EAPC_result)]
+EAPC_ASMR_country <- EAPC_ASMR_country[,.(location_id, ASMR = EAPC_result)]
+
+EAPC_country <- EAPC_ASIR_country[EAPC_ASMR_country, on = .(location_id)]
+EAPC_country <- EAPC_country[EAPC_ASDR_country, on = .(location_id)]
+EAPC_country <- country_names[EAPC_country, on = .(location_id)]
+
+EAPC_region_country <- rbind(EAPC_region, EAPC_country)
+
+write.csv(EAPC_region_country, 'I:/Papers/URI/Data/results/table7.csv')
+```
+
+## Table7 - age and sex
+```{r age and sex}
+age_years <- fread('I:/Papers/URI/Data/single/age_years.csv')
+age_groups <- c("Age-standardized", "Under 5", "5 to 9", "10 to 14", "15 to 19", 
+                "20 to 24", "25 to 29", "30 to 34", "35 to 39", "40 to 44",
+                "45 to 49", "50 to 54", "55 to 59", "60 to 64", "65 to 69", 
+                "70 to 74", "75 to 79", "80 plus")
+sex_groups <- age_years$sex_name %>% unique()
+
+ages_sex <- age_years[measure_name == 'Incidence' & 
+                           age_name %in% age_groups & 
+                           metric_name == 'Rate' &
+                           location_id == 1 &
+                           sex_name %in% sex_groups &
+                           year == 2019,]
+ages_sex$val <- format(round(ages_sex$val, digits = 1), 
+                       nsmall = 1, big.mark = ',', trim = T)
+ages_sex$upper <- format(round(ages_sex$upper, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$lower <- format(round(ages_sex$lower, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$result <- paste(ages_sex$val,' (', 
+                       ages_sex$lower, ' to ', 
+                       ages_sex$upper, ')', 
+                       sep = '')
+ages_sex_in <- ages_sex[,.(sex_name, age_name, "InRate" = result)]
+
+ages_sex <- age_years[measure_name == 'DALYs (Disability-Adjusted Life Years)' & 
+                           age_name %in% age_groups & 
+                           metric_name == 'Rate' &
+                           location_id == 1 &
+                           sex_name %in% sex_groups &
+                           year == 2019,]
+ages_sex$val <- format(round(ages_sex$val, digits = 1), 
+                       nsmall = 1, big.mark = ',', trim = T)
+ages_sex$upper <- format(round(ages_sex$upper, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$lower <- format(round(ages_sex$lower, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$result <- paste(ages_sex$val,' (', 
+                       ages_sex$lower, ' to ', 
+                       ages_sex$upper, ')', 
+                       sep = '')
+ages_sex_da <- ages_sex[,.(sex_name, age_name, "DaRate" = result)]
+
+ages_sex <- age_years[measure_name == 'Deaths' & 
+                           age_name %in% age_groups & 
+                           metric_name == 'Rate' &
+                           location_id == 1 &
+                           sex_name %in% sex_groups &
+                           year == 2019,]
+ages_sex$val <- format(round(ages_sex$val, digits = 1), 
+                       nsmall = 1, big.mark = ',', trim = T)
+ages_sex$upper <- format(round(ages_sex$upper, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$lower <- format(round(ages_sex$lower, digits = 1), 
+                         nsmall = 1, big.mark = ',', trim = T)
+ages_sex$result <- paste(ages_sex$val,' (', 
+                       ages_sex$lower, ' to ', 
+                       ages_sex$upper, ')', 
+                       sep = '')
+ages_sex_de <- ages_sex[,.(sex_name, age_name, "DeRate" = result)]
+
+table7 <- ages_sex_in[ages_sex_de, on = .(sex_name, age_name)]
+table7 <- table7[ages_sex_da, on = .(sex_name, age_name)]
+
+write.csv(table7, 'I:/Papers/URI/Data/results/table7.csv')
+```
