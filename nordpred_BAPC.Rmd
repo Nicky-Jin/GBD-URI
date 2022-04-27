@@ -1,0 +1,366 @@
+---
+title: "Nordpred&BAPC"
+author: "Nicky Jin"
+date: "2021/4/25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Preparations
+## Packages
+```{r install packages, message = FALSE}
+#  # nordpred package
+# library(remotes)
+# remotes::install_github("haraldwf/nordpred")
+# remove.packages('nordpred')
+# 
+# #INLA
+# install.packages('foreach')
+# install.packages("INLA", repos = "https://inla.r-inla-download.org/R/stable", dependencies = TRUE)
+# 
+# #incAnalysis
+# install_github('mknoll/incAnalysis')
+# 
+# #BAPC
+# install.packages("cmprsk")
+# install.packages("fanplot")
+# install.packages("Epi")
+# install.packages("BAPC", repos = "http://R-Forge.R-project.org")
+
+```
+
+
+```{r library_packages, message = FALSE}
+rm(list = ls())
+library(data.table)
+library(INLA)
+library(BAPC)
+library(nordpred)
+library(reshape2)
+library(tidyverse)
+library(incAnalysis)
+library(ggplot2)
+```
+
+## Function used
+```{r function_year5, message = FALSE}
+
+function_year5 <- function(table_name, start_year, end_year, current_year){
+  
+  remain <- current_year - round((current_year - start_year)/5) * 5 
+  year_names <- NULL
+  for (i in start_year:end_year) {
+    if((i - current_year)/5 - round((i - current_year)/5) == 0){
+      if(i == remain){
+        temp <- paste(start_year, i, sep = '-')
+        year_names <- append(year_names, temp)
+      }
+      else{
+        temp <- paste(i-4, i, sep = '-')
+        year_names <- append(year_names, temp)
+      }
+    }
+  }
+  
+  table_name <- table_name %>% as.data.frame()
+  new_years <- seq(start_year,end_year,1)
+  new_table <- matrix(data = rep(0, length(year_names)*18), ncol = length(year_names), nrow = 18) %>% as.data.frame()
+  colnames(new_table) <- year_names
+  
+  j = 1
+  for (i in 1:(end_year - start_year + 1)) {
+    if((new_years[i] - 2017)/5 - round((new_years[i] - 2017)/5) != 0){
+      new_table[, year_names[j]] <- new_table[,year_names[j]] + table_name[,as.character(new_years[i])]
+    }
+    else{
+      if(j == 1){
+        new_table[,year_names[j]] <- (new_table[,year_names[j]] + table_name[,as.character(new_years[i])]) / (remain - start_year + 1)
+      }
+      else{
+        new_table[,year_names[j]] <- (new_table[,year_names[j]] + table_name[,as.character(new_years[i])]) / 5
+      }
+      j = j + 1
+    }
+  }
+  return(new_table)
+}
+
+
+```
+
+# Data preparation
+## esopheageal cancer
+*Download from: http://ghdx.healthdata.org/gbdresults-tool *
+```{r esopheageal cancer data, message = FALSE}
+esoph <-  fread('I:/Databases/nordpred/esoph.csv')
+ages <- c("15 to 19", "20 to 24", "25 to 29",
+          "30 to 34", "35 to 39", "40 to 44", "45 to 49", "50 to 54", "55 to 59",        
+          "60 to 64", "65 to 69", "70 to 74", "75 to 79", "80 to 84", "85 to 89", 
+          "90 to 94", "95 plus")
+### for Death for male (val = 0 when age < 15)
+esoph_ages <- esoph[age_name %in% ages & 
+                      sex_name == 'Male' &
+                      metric_name == 'Number' &
+                      measure_name == 'Deaths',
+                    .(age_id, age_name, year, val)]
+
+esoph_ages_n <- dcast(data = esoph_ages, age_id + age_name ~ year)
+rownames(esoph_ages_n) <- c("15-19", "20-24", "25-29", "30-34", 
+                            "35-39", "40-44", "45-49", "50-54", 
+                            "55-59", "60-64", "65-69", "70-74", 
+                            "75-79", "80-84", "85-89", "90-94","95+")
+esoph_ages_n["0-14",] <- 0
+esoph_ages_n <- esoph_ages_n[order(esoph_ages_n$age_id),]
+esoph_ages_g <- function_year5(esoph_ages_n, 1990, 2017, 2017)
+```
+
+## population
+*Download from: https://population.un.org/wpp/Download/Standard/CSV/*
+```{r population, message = FALSE}
+## data from United Nations
+population <- fread('I:/Databases/nordpred/WPP2019_PopulationByAgeSex_Medium.csv')
+china_population <- population[Location == 'China',]
+china_population_1990_2017 <- china_population[Time %in% 1990:2042,
+                                               .(Age_id = 1:21, AgeGrp, Time, PopMale = 1000 * PopMale)]
+china_population_1990_2017_n <- dcast(data = china_population_1990_2017, Age_id +  AgeGrp ~ Time)
+
+#calculation of 95+
+china_population_1990_2017_n[22, 3:55] <- china_population_1990_2017_n[20, 3:55] + china_population_1990_2017_n[21, 3:55]
+china_population_1990_2017_n[1, 3:55] <- china_population_1990_2017_n[1, 3:55] + china_population_1990_2017_n[2, 3:55] + china_population_1990_2017_n[3, 3:55]
+china_population_1990_2017_n <- china_population_1990_2017_n[-c(2,3,20,21),]
+
+china_population_1990_2017_g <- function_year5(china_population_1990_2017_n, 1990, 2042, 2017)
+
+rownames(china_population_1990_2017_g) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                                            "35-39", "40-44", "45-49", "50-54", 
+                                            "55-59", "60-64", "65-69", "70-74", 
+                                            "75-79", "80-84", "85-89", "90-94","95+")
+## data from United Nations
+population <- fread('I:/Databases/nordpred/WPP2019_PopulationByAgeSex_Medium.csv')
+china_population <- population[Location == 'China',]
+unique(china_population$AgeGrp)
+china_population_1990_2017 <- china_population[Time %in% 1990:2042,
+                                               .(Age_id = 1:21, AgeGrp, Time, PopMale = 1000 * PopMale)]
+china_population_1990_2017_n <- dcast(data = china_population_1990_2017, Age_id +  AgeGrp ~ Time)
+
+#calculation of 95+
+china_population_1990_2017_n[22, 3:55] <- china_population_1990_2017_n[20, 3:55] + china_population_1990_2017_n[21, 3:55]
+china_population_1990_2017_n[1, 3:55] <- china_population_1990_2017_n[1, 3:55] + china_population_1990_2017_n[2, 3:55] + china_population_1990_2017_n[3, 3:55]
+china_population_1990_2017_n <- china_population_1990_2017_n[-c(2,3,20,21),]
+rownames(china_population_1990_2017_n) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                                            "35-39", "40-44", "45-49", "50-54", 
+                                            "55-59", "60-64", "65-69", "70-74", 
+                                            "75-79", "80-84", "85-89", "90-94","95+")
+
+china_population_1990_2017_g <- function_year5(china_population_1990_2017_n, 1990, 2042, 2017)
+rownames(china_population_1990_2017_g) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                                            "35-39", "40-44", "45-49", "50-54", 
+                                            "55-59", "60-64", "65-69", "70-74", 
+                                            "75-79", "80-84", "85-89", "90-94","95+")
+```
+
+## data for age-standardization
+*Download from: https://seer.cancer.gov/stdpopulations/world.who.html*
+```{r age standard, message = FALSE}
+age_stand <- read_file('I:/Databases/nordpred/AS.txt')
+age_stand <- gsub(pattern = '\n', replacement = '\t', x = age_stand)
+age_stand <- gsub(pattern = '\r', replacement = '', x = age_stand)
+age_stand <- strsplit(x = age_stand, split = '\t')
+age_stand <- matrix(data = unlist(age_stand), ncol = 5, byrow = T) %>% as.data.table()
+colnames(age_stand) <- age_stand[1,] %>% as.character()
+age_stand <- age_stand[-1,]
+write.csv(age_stand, 'I:/Databases/nordpred/age_stand.csv')
+
+wstand <- c(age_stand$`WHO World Standard (%)`[1:3] %>% as.numeric() %>% sum(), 
+            age_stand$`WHO World Standard (%)`[4:19] %>% as.numeric(),
+            age_stand$`WHO World Standard (%)`[20:21] %>% as.numeric() %>% sum() - 0.035)/100
+#sum of wstand must be 1
+sum(wstand)
+```
+
+# Models
+## nordpred and plot (use power model, power = 5 <I've tried the log link model, almost same>)
+```{r nordpred, message = FALSE}
+res <- nordpred(esoph_ages_g, china_population_1990_2017_g, noperiods = 4 , startestage = 2, startuseage = 2,
+                cuttrend = c(0, .25, .5, .75, .75), linkfunc = "power5", recent = FALSE)
+plot(res, standpop = wstand, new = TRUE)
+```
+
+## plot predicted results with origin results
+```{r observed & predicted, message = FALSE}
+result <- round(nordpred.getpred(res, incidence = TRUE, standpop = NULL), 2) 
+rownames(result) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                      "35-39", "40-44", "45-49", "50-54", 
+                      "55-59", "60-64", "65-69", "70-74", 
+                      "75-79", "80-84", "85-89", "90-94","95+")
+china_annual <- china_population_1990_2017_g
+china_annual$age_names <- rownames(china_annual)
+
+years <- colnames(china_annual)
+china_all <- data.frame(year = rep(0, 11), number = rep(0, 11), se = seq(1:11))
+for (i in 1:11) {
+  china_all$year[i] <- years[i]
+  china_all$number[i] <- sum(china_annual[, years[i]] * result[, years[i]]) / 100000
+}
+
+china_all_years <- NULL
+for(i in 1:11){
+  if(china_all$year[i] == '1990-1992'){
+    china_all_years <- append(china_all_years, rep(china_all$number[i], 3))
+  }
+  else{
+    china_all_years <- append(china_all_years, rep(china_all$number[i], 5))
+  }
+}
+china_all_years <- data.frame(year = seq(1990, 2042, 1), number = china_all_years)
+
+
+#observe from 1990 to 2017
+esoph_all <- esoph[age_name == 'All Ages' & 
+                      sex_name == 'Male' &
+                      metric_name == 'Number' &
+                      measure_name == 'Deaths',
+                    .(age_id, age_name, year, val)]
+#rate in 2017
+rate_2017 <- esoph[age_name %in% ages & 
+                     sex_name == 'Male' &
+                     metric_name == 'Number' &
+                     measure_name == 'Deaths' &
+                     year == 2017,
+                   .(age_id, age_name, val)]
+
+temp <-  data.frame(age_id = 0, age_name = '0-14', val = 0)
+rate_2017 <- rbind(rate_2017, temp)
+rate_2017 <- rate_2017[order(rate_2017$age_id),]
+
+pop_2017 <- china_population_1990_2017_n %>% as.data.table()
+pop_2017 <-  pop_2017[, .(age_name = c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                       "35-39", "40-44", "45-49", "50-54", 
+                        "55-59", "60-64", "65-69", "70-74", 
+                        "75-79", "80-84", "85-89", "90-94","95+"), 
+                         val = pop_2017$'2017')]
+
+rate_2017$val <-  rate_2017$val/pop_2017$val
+
+china_pop <- china_population_1990_2017_n[,3:55]
+new_years <- seq(2018, 2042, 1) %>% as.character()
+china_all_3 <- data.frame(year = rep(0, 25), number = rep(0, 25))
+for (i in 1:25) {
+  china_all_3$year[i] <- new_years[i]
+  china_all_3$number[i] <- sum(china_pop[, new_years[i]] * rate_2017[, val]) 
+}
+
+ #1% up
+rate_2017_u <- rate_2017 %>% as.data.frame()
+new_years <- seq(2018, 2042, 1) %>% as.character()
+for (i in 1:25){
+  rate_2017_u[, new_years[i]] <- rate_2017_u$val * (1.01 ^ (i - 1))
+}
+
+china_all_4 <- data.frame(year = rep(0, 25), number = rep(0, 25), se = seq(29:53))
+for (i in 1:25) {
+  china_all_4$year[i] <- new_years[i]
+  china_all_4$number[i] <- sum(china_pop[, new_years[i]] * rate_2017_u[, new_years[i]]) 
+}
+
+#1% down
+rate_2017_u <- rate_2017 %>% as.data.frame()
+new_years <- seq(2018, 2042, 1) %>% as.character()
+for (i in 1:25){
+  rate_2017_u[, new_years[i]] <- rate_2017_u$val * (0.99 ^ (i - 1))
+}
+
+china_all_5 <- data.frame(year = rep(0, 25), number = rep(0, 25), se = seq(29:53))
+for (i in 1:25) {
+  china_all_5$year[i] <- new_years[i]
+  china_all_5$number[i] <- sum(china_pop[, new_years[i]] * rate_2017_u[, new_years[i]])
+}
+
+china_all_4$number_up <- china_all_4$number
+china_all_4_5 <- cbind(china_all_5, china_all_4[4])
+
+#plot
+ggplot() + 
+  geom_line(data = china_all_3, aes(x = as.numeric(year), y = number), linetype = 'dashed') +
+  geom_ribbon(data = china_all_4_5, aes(x = as.numeric(year), ymin = number, ymax = number_up), alpha = 0.4) +
+  geom_point(data = esoph_all, aes(x = year, y = val)) + 
+  geom_line(data = china_all_years[29:53,], aes(x = year, y = number), color = 'blue')
+
+```
+
+## BAPC model use BAPC package
+```{r BAPC, message = FALSE}
+## data preparation
+china_ay <- t(china_population_1990_2017_n) %>% as.data.frame()
+china_ay <- china_ay[-c(1,2),]
+china_ay <- apply(china_ay, c(1,2), as.integer) %>% as.data.frame()
+
+esoph_ay <- t(esoph_ages_n) %>% as.data.frame()
+esoph_ay <- esoph_ay[-c(1,2),]
+esoph_ay <- apply(esoph_ay, c(1,2), as.numeric) %>% as.data.frame()
+esoph_ay <- apply(esoph_ay, c(1,2), round) %>% as.data.frame()
+
+esoph_pro <- matrix(data = NA, nrow = 25, ncol = 18) %>% as.data.frame() 
+rownames(esoph_pro) <- seq(2018,2042,1)
+colnames(esoph_pro) <-  c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                          "35-39", "40-44", "45-49", "50-54", 
+                          "55-59", "60-64", "65-69", "70-74", 
+                          "75-79", "80-84", "85-89", "90-94","95+")
+esoph_ay <- rbind(esoph_ay, esoph_pro)
+
+# BAPC model
+lc_esoph <- APCList(esoph_ay, china_ay, gf = 5)
+
+require(INLA)
+bapc_result <- BAPC(lc_esoph, predict = list(npredict = 25, retro = T),
+               secondDiff = FALSE, stdweight = wstand, verbose = TRUE)
+
+par(ann = F)
+plotBAPC(bapc_result, scale = 10^5, type = 'ageStdRate', showdata = TRUE)
+title(xlab = 'Period', ylab = 'Age-standardized Rate')
+
+#Aquaire Predict data
+age_proj <- agespec.proj(x = bapc_result) %>% as.data.frame()
+age_proj_mean <- age_proj[,colnames(age_proj) %like% 'mean']
+colnames(age_proj_mean) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                             "35-39", "40-44", "45-49", "50-54", 
+                             "55-59", "60-64", "65-69", "70-74", 
+                             "75-79", "80-84", "85-89", "90-94","95+")
+sum_year <- apply(age_proj_mean, 1, sum) %>% as.data.frame()
+colnames(sum_year) <- 'number'
+sum_year$year <- rownames(sum_year)
+
+ggplot() + 
+  geom_line(data = china_all_3, aes(x = as.numeric(year), y = number), linetype = 'dashed') +
+  geom_ribbon(data = china_all_4_5, aes(x = as.numeric(year), ymin = number, ymax = number_up), alpha = 0.4) +
+  geom_point(data = esoph_all, aes(x = year, y = val)) + 
+  geom_line(data = china_all_years[29:53,], aes(x = as.numeric(year), y = number), color = 'blue') +
+  geom_point(data = sum_year[29:53,], aes(x = as.numeric(year), y = number), shape = 2)
+
+```
+
+## incAnalysis
+```{r incAnalysis}
+#incAnalysis
+inc_bapc <- incAnalysis::bapcCalc(china_ay, esoph_ay, gf = 5, predict = list(npredict = 25, retro = T))
+inc_pro <- inc_bapc[["bapc"]]@agespec.proj %>% as.data.frame()
+inc_pro_mean <- inc_pro[,colnames(inc_pro) %like% 'mean']
+colnames(inc_pro_mean) <- c("0-14", "15-19", "20-24", "25-29", "30-34", 
+                             "35-39", "40-44", "45-49", "50-54", 
+                             "55-59", "60-64", "65-69", "70-74", 
+                             "75-79", "80-84", "85-89", "90-94","95+")
+inc_sum_year <- apply(inc_pro_mean, 1, sum) %>% as.data.frame()
+colnames(inc_sum_year) <- 'number'
+inc_sum_year$year <- rownames(inc_sum_year)
+
+ggplot() + 
+  geom_line(data = china_all_3, aes(x = as.numeric(year), y = number), linetype = 'dashed') +
+  geom_ribbon(data = china_all_4_5, aes(x = as.numeric(year), ymin = number, ymax = number_up), alpha = 0.4) +
+  geom_point(data = esoph_all, aes(x = year, y = val)) + 
+  geom_line(data = china_all_years[29:53,], aes(x = as.numeric(year), y = number), color = 'blue') +
+  geom_point(data = inc_sum_year[29:53,], aes(x = as.numeric(year), y = number), shape = 1)
+
+```
